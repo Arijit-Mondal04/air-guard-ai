@@ -6,13 +6,13 @@
 }
 
 body {
-  background-color: #f5f1e8;
-  color: #0b211a;
+  background-color: #f7f5f0;
+  color: #0f1e36;
 }
 
 @media print {
   body {
     background-color: #ffffff;
-    color: #0b211a;
+    color: #0f1e36;
   }
 }

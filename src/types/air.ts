@@ -1,13 +1,3 @@
-export interface LiveAqiData {
-  resolvedName: string;
-  country: string;
-  usAqi: number;
-  pm25: number;
-  pm10: number;
-  category: string;
-  fetchedAt: string;
-}
-
 export interface UserProfile {
   city: string;
   aqiLevel: string;
@@ -17,23 +7,39 @@ export interface UserProfile {
   liveMetrics?: LiveAqiData | null;
 }
 
+export interface HourlyForecastPoint {
+  time: string;
+  hourLabel: string;
+  pm25: number;
+  usAqi: number;
+}
+
+export interface LiveAqiData {
+  resolvedName: string;
+  usAqi: number;
+  pm25: number;
+  pm10: number;
+  category: string;
+  hourlyForecast: HourlyForecastPoint[];
+  safestWindowLabel: string;
+  peakWindowLabel: string;
+}
+
 export interface ActionItem {
   title: string;
   description: string;
-  impactExplanation: string;
   effortLevel: 'Low' | 'Medium' | 'High';
-}
-
-export interface QuantifiedImpact {
-  estimatedIndoorPm25Reduction: string;
-  weeklyCo2SavedKg: string;
-  safeVentilationWindow: string;
+  impactExplanation: string;
 }
 
 export interface AirQualityPlan {
   riskSummary: string;
-  quantifiedImpact: QuantifiedImpact;
-  lowEmissionRoutines: ActionItem[];
+  quantifiedImpact: {
+    estimatedIndoorPm25Reduction: string;
+    weeklyCo2SavedKg: string;
+    safeVentilationWindow: string;
+  };
   indoorAirHacks: ActionItem[];
+  lowEmissionRoutines: ActionItem[];
   sustainableAlternatives: ActionItem[];
 }

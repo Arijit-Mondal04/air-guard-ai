@@ -16,8 +16,11 @@ export const metadata: Metadata = {
   title: 'VayuGuard — Urban Air Telemetry & Household Smog Defense',
   description:
     'Real-time PM2.5 telemetry and personalized winter smog protection & emission-reduction protocols.',
+  icons: {
+    icon: '/icon.svg?v=2',
+    shortcut: '/icon.svg?v=2',
+  },
 };
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -25,7 +28,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${spaceGrotesk.variable} ${jetbrainsMono.variable}`}>
-      <body className="font-sans antialiased bg-[#F5F1E8] text-[#0B211A]">
+      <body className="font-sans antialiased bg-[#F7F5F0] text-[#0F1E36]">
         {children}
       </body>
     </html>
