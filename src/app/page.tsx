@@ -23,7 +23,6 @@ import {
   CheckCircle2,
   Circle,
   Flame,
-  Cigarette,
   Download,
   Share2,
   Footprints,
@@ -32,6 +31,15 @@ import {
   Shirt,
 } from 'lucide-react';
 import { AirQualityPlan, LiveAqiData, UserProfile } from '@/types/air';
+import {
+  INDOOR_FIXES,
+  INDOOR_TRIGGERS,
+  calculateCigaretteEquivalent,
+  formatWhatsAppBrief,
+  getAqiStatusBadge,
+  getDailyActivityVerdicts,
+  simulateIndoorAir,
+} from '@/lib/airMetrics';
 
 const CITIES = ['Kolkata', 'Delhi', 'Mumbai', 'Bengaluru', 'Patna', 'Lucknow'];
 
@@ -65,18 +73,12 @@ const SUGGESTED_QUESTIONS = [
   'Which indoor plants actually help in winter smog?',
 ];
 
-const INDOOR_TRIGGERS = [
-  { id: 'tadka', label: 'Gas Tadka / Frying', spike: 220, desc: 'High oil & spice smoke burst' },
-  { id: 'dhoop', label: 'Agarbatti / Dhoop', spike: 165, desc: 'Fine incense particulate smoke' },
-  { id: 'coil', label: 'Mosquito Coil', spike: 190, desc: 'Continuous overnight smoke' },
-  { id: 'draft', label: 'Morning Window Open', spike: 95, desc: '7 AM street smog entering' },
-];
-
-const INDOOR_FIXES = [
-  { id: 'exhaust', label: 'Kitchen Exhaust On', reduction: 0.45, desc: 'Vents cooking smoke out' },
-  { id: 'hepa', label: 'HEPA / Box Fan On', reduction: 0.6, desc: 'Traps 99% fine particles' },
-  { id: 'seal', label: 'Door Gap Wet Towel', reduction: 0.25, desc: 'Blocks balcony drafts' },
-];
+const VERDICT_ICONS = {
+  walk: Footprints,
+  commute: GraduationCap,
+  windows: DoorOpen,
+  laundry: Shirt,
+};
 
 export default function AirQualityAssistant() {
   const [cityInput, setCityInput] = useState('Kolkata');
@@ -94,7 +96,6 @@ export default function AirQualityAssistant() {
   const [aqiError, setAqiError] = useState('');
 
   const [workspaceTab, setWorkspaceTab] = useState<'plan' | 'simulator' | 'ask'>('plan');
-
   const [activeTriggers, setActiveTriggers] = useState<string[]>(['tadka']);
   const [activeFixes, setActiveFixes] = useState<string[]>(['exhaust']);
 
@@ -170,7 +171,7 @@ export default function AirQualityAssistant() {
           setLiveAqi(currentLive);
         }
       } catch {
-        // Proceed even if sensor lookup fails
+        // Proceed with fallback severity if sensor fetch fails
       }
     }
 
@@ -245,90 +246,19 @@ export default function AirQualityAssistant() {
 
   const outdoorPm25 = liveAqi?.pm25 ?? 145;
   const usAqi = liveAqi?.usAqi ?? 198;
-
-  const getStatusBadge = (aqi: number) => {
-    if (aqi > 300) return { label: 'Hazardous Air', bg: 'bg-[#DC2626] text-white' };
-    if (aqi > 200) return { label: 'Very Poor Air', bg: 'bg-[#EA580C] text-white' };
-    if (aqi > 150) return { label: 'Poor Air', bg: 'bg-[#D97706] text-white' };
-    if (aqi > 100) return { label: 'Moderate Smog', bg: 'bg-[#CA8A04] text-white' };
-    return { label: 'Clean Air', bg: 'bg-[#0284C7] text-white' };
-  };
-
-  const statusBadge = getStatusBadge(usAqi);
-
-  const triggerSpike = INDOOR_TRIGGERS.filter((t) => activeTriggers.includes(t.id)).reduce(
-    (sum, t) => sum + t.spike,
-    0
-  );
-  const rawIndoorPeak = Math.round(outdoorPm25 * 0.65 + triggerSpike);
-  const mitigationMultiplier = INDOOR_FIXES.filter((f) => activeFixes.includes(f.id)).reduce(
-    (mult, f) => mult * (1 - f.reduction),
-    1
-  );
-  const mitigatedIndoorPm25 = Math.max(14, Math.round(rawIndoorPeak * mitigationMultiplier));
-  const clearanceMinutes = Math.max(15, Math.round((rawIndoorPeak / 3.5) * mitigationMultiplier));
-
-  const unprotectedCigs = (outdoorPm25 / 22).toFixed(1);
-  const protectedCigs = (mitigatedIndoorPm25 / 22).toFixed(1);
-
-  const activityVerdicts = [
-    {
-      label: 'Morning Walk',
-      icon: Footprints,
-      verdict: usAqi > 150 ? 'Skip Outdoor' : 'Safe Before 8 AM',
-      tone:
-        usAqi > 150
-          ? 'bg-[#FEE2E2] text-[#991B1B] border-[#FCA5A5]'
-          : 'bg-[#E0F2FE] text-[#075985] border-[#7DD3FC]',
-    },
-    {
-      label: 'School / Office',
-      icon: GraduationCap,
-      verdict: usAqi > 150 ? 'Wear N95 Mask' : 'Normal Commute',
-      tone:
-        usAqi > 150
-          ? 'bg-[#FEF3C7] text-[#92400E] border-[#FCD34D]'
-          : 'bg-[#E0F2FE] text-[#075985] border-[#7DD3FC]',
-    },
-    {
-      label: 'Open Windows',
-      icon: DoorOpen,
-      verdict: liveAqi?.safestWindowLabel ? `Only ${liveAqi.safestWindowLabel.split(' ')[0]}` : '1 PM – 3 PM Only',
-      tone: 'bg-[#E0F2FE] text-[#075985] border-[#7DD3FC]',
-    },
-    {
-      label: 'Drying Laundry',
-      icon: Shirt,
-      verdict: usAqi > 180 ? 'Dry Indoors' : 'Afternoon Balcony',
-      tone:
-        usAqi > 180
-          ? 'bg-[#FEE2E2] text-[#991B1B] border-[#FCA5A5]'
-          : 'bg-[#E0F2FE] text-[#075985] border-[#7DD3FC]',
-    },
-  ];
+  const statusBadge = getAqiStatusBadge(usAqi);
+  const unprotectedCigs = calculateCigaretteEquivalent(outdoorPm25);
+  const simulation = simulateIndoorAir(outdoorPm25, activeTriggers, activeFixes);
+  const activityVerdicts = getDailyActivityVerdicts(usAqi, liveAqi?.safestWindowLabel);
 
   function handleCopyWhatsApp() {
-    const activeCity = (liveAqi?.resolvedName ?? cityInput).toUpperCase();
-    const safeWindow =
-      plan?.quantifiedImpact?.safeVentilationWindow ??
-      liveAqi?.safestWindowLabel ??
-      '1:00 PM – 3:30 PM';
-    const topRules = plan
-      ? [
-          ...(plan.indoorAirHacks || []).slice(0, 2).map((h) => `• ${h.title}`),
-          ...(plan.lowEmissionRoutines || []).slice(0, 1).map((r) => `• ${r.title}`),
-        ].join('\n')
-      : '• Keep windows shut during 6–9 AM smog peak\n• Run kitchen exhaust during cooking/tadka\n• Wet-mop floors instead of dry sweeping';
-
-    const msg = [
-      `*VAYUGUARD // ${activeCity} FAMILY AIR BRIEFING*`,
-      `Live Air: US AQI ${usAqi} (${outdoorPm25} µg/m³) — equals ~${unprotectedCigs} cigarettes/day unprotected`,
-      `Safest Window to Air Out Home: ${safeWindow}`,
-      '',
-      '*Today’s Simple Rules:*',
-      topRules,
-    ].join('\n');
-
+    const msg = formatWhatsAppBrief({
+      city: liveAqi?.resolvedName ?? cityInput,
+      usAqi,
+      outdoorPm25,
+      safestWindowLabel: liveAqi?.safestWindowLabel,
+      plan,
+    });
     navigator.clipboard.writeText(msg);
     setWaCopied(true);
     setTimeout(() => setWaCopied(false), 2500);
@@ -347,14 +277,11 @@ export default function AirQualityAssistant() {
       liveAqi?.safestWindowLabel ??
       '1:00 PM – 3:30 PM';
 
-    // Solid Midnight Cobalt Header
     ctx.fillStyle = '#0F1E36';
     ctx.fillRect(0, 0, 1080, 390);
-    // Solid Warm Ivory Body
     ctx.fillStyle = '#F7F5F0';
     ctx.fillRect(0, 390, 1080, 690);
 
-    // Vivid Amber Accent Bar
     ctx.fillStyle = '#F59E0B';
     ctx.fillRect(72, 64, 18, 56);
 
@@ -372,7 +299,7 @@ export default function AirQualityAssistant() {
 
     ctx.fillStyle = '#FBBF24';
     ctx.font = 'bold 28px sans-serif';
-    ctx.fillText(`With Home Protection: drops to ~${protectedCigs} cigarettes/day`, 72, 330);
+    ctx.fillText(`With Home Protection: drops to ~${simulation.protectedCigarettes} cigarettes/day`, 72, 330);
 
     ctx.fillStyle = '#0F1E36';
     ctx.fillRect(72, 440, 936, 130);
@@ -483,11 +410,17 @@ export default function AirQualityAssistant() {
 
   return (
     <div className="min-h-screen bg-[#F7F5F0] text-[#0F1E36] selection:bg-[#F59E0B] selection:text-[#0F1E36]">
-      {/* Midnight Cobalt Top Navigation */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:bg-[#F59E0B] focus:text-[#0F1E36] focus:px-4 focus:py-2 focus:rounded-lg focus:font-bold"
+      >
+        Skip to main content
+      </a>
+
       <header className="bg-[#0F1E36] text-[#F7F5F0] border-b border-[#1E3354] sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-[#F59E0B] text-[#0F1E36] flex items-center justify-center">
+            <div className="w-9 h-9 rounded-lg bg-[#F59E0B] text-[#0F1E36] flex items-center justify-center" aria-hidden="true">
               <Wind className="w-5 h-5 stroke-[2.5]" />
             </div>
             <div>
@@ -500,31 +433,33 @@ export default function AirQualityAssistant() {
             <button
               type="button"
               onClick={handleCopyWhatsApp}
+              aria-label="Copy WhatsApp air quality briefing"
               className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-[#192D4E] hover:bg-[#233E6B] text-[#F7F5F0] border border-[#2C4B7E] transition cursor-pointer"
             >
-              <Share2 className="w-3.5 h-3.5 text-[#FBBF24]" />
+              <Share2 className="w-3.5 h-3.5 text-[#FBBF24]" aria-hidden="true" />
               <span className="hidden sm:inline">{waCopied ? 'Copied for WhatsApp!' : 'Share on WhatsApp'}</span>
               <span className="sm:hidden">{waCopied ? 'Copied!' : 'Share'}</span>
             </button>
             <button
               type="button"
               onClick={handleDownloadFamilyCard}
+              aria-label="Download family air quality guide image"
               className="inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-lg bg-[#F59E0B] hover:bg-[#D97706] text-[#0F1E36] transition cursor-pointer"
             >
-              <Download className="w-3.5 h-3.5" />
+              <Download className="w-3.5 h-3.5" aria-hidden="true" />
               <span>Save Family Poster</span>
             </button>
           </div>
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8">
+      <main id="main-content" className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8">
         {/* STEP 1: INSTANT LIVE AIR CHECKER & DAILY VERDICTS */}
-        <section className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-5 sm:p-7 space-y-6">
+        <section aria-labelledby="telemetry-heading" className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-5 sm:p-7 space-y-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E6E8EE] pb-5">
-            <div>
+            <div aria-live="polite">
               <div className="flex items-center gap-2.5 flex-wrap">
-                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-[#0F1E36]">
+                <h1 id="telemetry-heading" className="text-2xl sm:text-3xl font-bold tracking-tight text-[#0F1E36]">
                   {liveAqi?.resolvedName ?? cityInput}
                 </h1>
                 <span className={`text-xs font-bold px-3 py-1 rounded-full ${statusBadge.bg}`}>
@@ -537,7 +472,6 @@ export default function AirQualityAssistant() {
               </p>
             </div>
 
-            {/* Quick City Switcher + Search */}
             <div className="flex flex-col sm:items-end gap-2">
               <form
                 onSubmit={(e) => {
@@ -547,7 +481,7 @@ export default function AirQualityAssistant() {
                 className="flex gap-2 w-full sm:w-auto"
               >
                 <div className="relative flex-1 sm:w-56">
-                  <MapPin className="w-4 h-4 text-[#0284C7] absolute left-3 top-3" />
+                  <MapPin className="w-4 h-4 text-[#0284C7] absolute left-3 top-3" aria-hidden="true" />
                   <input
                     type="text"
                     value={cityInput}
@@ -562,47 +496,50 @@ export default function AirQualityAssistant() {
                   disabled={fetchingAqi || !cityInput.trim()}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0F1E36] hover:bg-[#1E3A66] text-white text-sm font-semibold transition cursor-pointer"
                 >
-                  <Search className="w-4 h-4" />
+                  <Search className="w-4 h-4" aria-hidden="true" />
                   {fetchingAqi ? 'Checking...' : 'Check'}
                 </button>
               </form>
 
-              <div className="flex flex-wrap gap-1.5">
-                {CITIES.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => {
-                      setCityInput(c);
-                      syncCityTelemetry(c);
-                    }}
-                    className={`text-xs px-2.5 py-1 rounded-md border transition cursor-pointer ${
-                      cityInput.toLowerCase() === c.toLowerCase()
-                        ? 'bg-[#0F1E36] text-white border-[#0F1E36] font-semibold'
-                        : 'bg-[#F7F5F0] text-[#334155] border-[#D5D8DF] hover:border-[#0F1E36]'
-                    }`}
-                  >
-                    {c}
-                  </button>
-                ))}
+              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Quick city presets">
+                {CITIES.map((c) => {
+                  const selected = cityInput.toLowerCase() === c.toLowerCase();
+                  return (
+                    <button
+                      key={c}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => {
+                        setCityInput(c);
+                        syncCityTelemetry(c);
+                      }}
+                      className={`text-xs px-2.5 py-1 rounded-md border transition cursor-pointer ${
+                        selected
+                          ? 'bg-[#0F1E36] text-white border-[#0F1E36] font-semibold'
+                          : 'bg-[#F7F5F0] text-[#334155] border-[#D5D8DF] hover:border-[#0F1E36]'
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
 
           {aqiError && (
-            <p className="text-xs text-[#DC2626] font-medium bg-[#FEE2E2] px-3 py-2 rounded-lg">
+            <p role="alert" className="text-xs text-[#DC2626] font-medium bg-[#FEE2E2] px-3 py-2 rounded-lg">
               {aqiError}
             </p>
           )}
 
-          {/* 4 Simple "Should I Do This Today?" Cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {activityVerdicts.map((item) => {
-              const Icon = item.icon;
+              const Icon = VERDICT_ICONS[item.id];
               return (
-                <div key={item.label} className="bg-[#F7F5F0] border border-[#DCE0E8] rounded-lg p-3.5 space-y-2">
+                <div key={item.id} className="bg-[#F7F5F0] border border-[#DCE0E8] rounded-lg p-3.5 space-y-2">
                   <div className="flex items-center gap-2 text-xs font-semibold text-[#475569]">
-                    <Icon className="w-4 h-4 text-[#0F1E36]" />
+                    <Icon className="w-4 h-4 text-[#0F1E36]" aria-hidden="true" />
                     <span>{item.label}</span>
                   </div>
                   <span className={`inline-block text-xs font-bold px-2.5 py-1 rounded-md border ${item.tone}`}>
@@ -613,7 +550,6 @@ export default function AirQualityAssistant() {
             })}
           </div>
 
-          {/* Easy-to-Read 24-Hour Air Chart */}
           {hourlyData.length > 0 && (
             <div className="bg-[#F7F5F0] border border-[#DCE0E8] rounded-lg p-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -633,7 +569,7 @@ export default function AirQualityAssistant() {
                 </div>
               </div>
 
-              <div className="h-24 flex items-end gap-1.5 pt-2">
+              <div className="h-24 flex items-end gap-1.5 pt-2" role="img" aria-label="24-hour PM2.5 air quality forecast bar chart">
                 {hourlyData.map((pt, idx) => {
                   const heightPct = Math.max(15, Math.min(100, Math.round((pt.pm25 / maxHourlyPm25) * 100)));
                   const barColor =
@@ -665,31 +601,31 @@ export default function AirQualityAssistant() {
         </section>
 
         {/* STEP 2: 3-CLICK HOUSEHOLD CUSTOMIZER */}
-        <section className="bg-[#0F1E36] text-[#F7F5F0] rounded-xl p-6 sm:p-8 space-y-6">
+        <section aria-labelledby="customizer-heading" className="bg-[#0F1E36] text-[#F7F5F0] rounded-xl p-6 sm:p-8 space-y-6">
           <div className="space-y-1">
             <span className="text-xs font-bold uppercase tracking-wider text-[#FBBF24]">
               Personalize Your Home Defense
             </span>
-            <h2 className="text-xl sm:text-2xl font-bold">
+            <h2 id="customizer-heading" className="text-xl sm:text-2xl font-bold">
               Tap what applies to your family (No typing needed)
             </h2>
           </div>
 
           <form onSubmit={handleGeneratePlan} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* Group 1: Family */}
               <div className="space-y-2.5">
-                <label className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
-                  <Users className="w-4 h-4 text-[#FBBF24]" />
+                <span className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
+                  <Users className="w-4 h-4 text-[#FBBF24]" aria-hidden="true" />
                   1. Who lives with you?
-                </label>
-                <div className="flex flex-wrap gap-2">
+                </span>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Household members">
                   {FAMILY_OPTIONS.map((opt) => {
                     const active = selectedFamily.includes(opt);
                     return (
                       <button
                         key={opt}
                         type="button"
+                        aria-pressed={active}
                         onClick={() => toggleSelection(selectedFamily, setSelectedFamily, opt)}
                         className={`text-xs px-3 py-2 rounded-lg font-medium border transition cursor-pointer ${
                           active
@@ -705,19 +641,19 @@ export default function AirQualityAssistant() {
                 </div>
               </div>
 
-              {/* Group 2: Home */}
               <div className="space-y-2.5">
-                <label className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
-                  <Home className="w-4 h-4 text-[#FBBF24]" />
+                <span className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
+                  <Home className="w-4 h-4 text-[#FBBF24]" aria-hidden="true" />
                   2. Your home setup
-                </label>
-                <div className="flex flex-wrap gap-2">
+                </span>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Home setup">
                   {HOME_OPTIONS.map((opt) => {
                     const active = selectedHome.includes(opt);
                     return (
                       <button
                         key={opt}
                         type="button"
+                        aria-pressed={active}
                         onClick={() => toggleSelection(selectedHome, setSelectedHome, opt)}
                         className={`text-xs px-3 py-2 rounded-lg font-medium border transition cursor-pointer ${
                           active
@@ -733,19 +669,19 @@ export default function AirQualityAssistant() {
                 </div>
               </div>
 
-              {/* Group 3: Travel */}
               <div className="space-y-2.5">
-                <label className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
-                  <Car className="w-4 h-4 text-[#FBBF24]" />
+                <span className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
+                  <Car className="w-4 h-4 text-[#FBBF24]" aria-hidden="true" />
                   3. Daily travel mode
-                </label>
-                <div className="flex flex-wrap gap-2">
+                </span>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Daily travel mode">
                   {TRAVEL_OPTIONS.map((opt) => {
                     const active = selectedTravel.includes(opt);
                     return (
                       <button
                         key={opt}
                         type="button"
+                        aria-pressed={active}
                         onClick={() => toggleSelection(selectedTravel, setSelectedTravel, opt)}
                         className={`text-xs px-3 py-2 rounded-lg font-medium border transition cursor-pointer ${
                           active
@@ -767,6 +703,7 @@ export default function AirQualityAssistant() {
                 type="text"
                 value={extraNotes}
                 onChange={(e) => setExtraNotes(e.target.value)}
+                aria-label="Additional household notes"
                 placeholder="Optional: add anything specific (e.g., ground floor near main road, newborn baby)..."
                 className="flex-1 rounded-lg bg-[#192D4E] border border-[#2C4B7E] px-4 py-3 text-sm text-[#F7F5F0] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#F59E0B]"
               />
@@ -775,7 +712,7 @@ export default function AirQualityAssistant() {
                 disabled={loading || !cityInput.trim()}
                 className="inline-flex items-center justify-center gap-2 bg-[#F59E0B] hover:bg-[#D97706] disabled:opacity-50 text-[#0F1E36] font-bold text-sm px-7 py-3.5 rounded-lg transition cursor-pointer shrink-0"
               >
-                <Sparkles className="w-4 h-4" />
+                <Sparkles className="w-4 h-4" aria-hidden="true" />
                 <span>{loading ? 'Creating Your Plan...' : "Build My Family's Air Plan"}</span>
               </button>
             </div>
@@ -787,16 +724,18 @@ export default function AirQualityAssistant() {
             role="alert"
             className="bg-[#FEE2E2] border border-[#FCA5A5] text-[#991B1B] p-4 rounded-xl flex items-center gap-3 text-sm font-medium"
           >
-            <AlertTriangle className="w-5 h-5 shrink-0" />
+            <AlertTriangle className="w-5 h-5 shrink-0" aria-hidden="true" />
             <span>{error}</span>
           </div>
         )}
 
         {/* STEP 3: CLEAN TABBED WORKSPACE */}
         <section className="space-y-5">
-          <div className="flex flex-wrap gap-2 border-b border-[#D5D8DF] pb-3">
+          <div role="tablist" aria-label="Workspace tools" className="flex flex-wrap gap-2 border-b border-[#D5D8DF] pb-3">
             <button
               type="button"
+              role="tab"
+              aria-selected={workspaceTab === 'plan'}
               onClick={() => setWorkspaceTab('plan')}
               className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition cursor-pointer ${
                 workspaceTab === 'plan'
@@ -804,12 +743,14 @@ export default function AirQualityAssistant() {
                   : 'bg-[#FDFCFA] text-[#334155] border border-[#D5D8DF] hover:border-[#0F1E36]'
               }`}
             >
-              <ShieldCheck className="w-4 h-4 text-[#F59E0B]" />
+              <ShieldCheck className="w-4 h-4 text-[#F59E0B]" aria-hidden="true" />
               <span>My Family&apos;s Action Plan</span>
             </button>
 
             <button
               type="button"
+              role="tab"
+              aria-selected={workspaceTab === 'simulator'}
               onClick={() => setWorkspaceTab('simulator')}
               className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition cursor-pointer ${
                 workspaceTab === 'simulator'
@@ -817,12 +758,14 @@ export default function AirQualityAssistant() {
                   : 'bg-[#FDFCFA] text-[#334155] border border-[#D5D8DF] hover:border-[#0F1E36]'
               }`}
             >
-              <Flame className="w-4 h-4 text-[#F59E0B]" />
+              <Flame className="w-4 h-4 text-[#F59E0B]" aria-hidden="true" />
               <span>Indoor Smoke Simulator (Tadka / Dhoop)</span>
             </button>
 
             <button
               type="button"
+              role="tab"
+              aria-selected={workspaceTab === 'ask'}
               onClick={() => setWorkspaceTab('ask')}
               className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition cursor-pointer ${
                 workspaceTab === 'ask'
@@ -830,16 +773,15 @@ export default function AirQualityAssistant() {
                   : 'bg-[#FDFCFA] text-[#334155] border border-[#D5D8DF] hover:border-[#0F1E36]'
               }`}
             >
-              <MessageSquare className="w-4 h-4 text-[#38BDF8]" />
+              <MessageSquare className="w-4 h-4 text-[#38BDF8]" aria-hidden="true" />
               <span>Ask a Question</span>
             </button>
           </div>
 
-          {/* TAB 1: FAMILY ACTION PLAN */}
           {workspaceTab === 'plan' && (
-            <div className="space-y-6">
+            <div role="tabpanel" className="space-y-6">
               {loading && (
-                <div className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-8 space-y-4 animate-pulse">
+                <div className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-8 space-y-4 animate-pulse" aria-busy="true">
                   <div className="h-5 w-56 bg-[#E2E8F0] rounded" />
                   <div className="h-16 w-full bg-[#F1F5F9] rounded" />
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -893,7 +835,7 @@ export default function AirQualityAssistant() {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div className="bg-[#F0F9FF] border border-[#BAE6FD] p-4 rounded-lg">
                         <div className="flex items-center gap-1.5 text-xs font-bold text-[#075985]">
-                          <CloudFog className="w-4 h-4" />
+                          <CloudFog className="w-4 h-4" aria-hidden="true" />
                           <span>Cleaner Indoor Air</span>
                         </div>
                         <p className="text-lg font-bold text-[#0F1E36] mt-1">
@@ -903,7 +845,7 @@ export default function AirQualityAssistant() {
 
                       <div className="bg-[#F0FDFA] border border-[#99F6E4] p-4 rounded-lg">
                         <div className="flex items-center gap-1.5 text-xs font-bold text-[#115E59]">
-                          <TrendingDown className="w-4 h-4" />
+                          <TrendingDown className="w-4 h-4" aria-hidden="true" />
                           <span>Carbon Saved</span>
                         </div>
                         <p className="text-lg font-bold text-[#0F1E36] mt-1">
@@ -913,7 +855,7 @@ export default function AirQualityAssistant() {
 
                       <div className="bg-[#FFFBEB] border border-[#FDE68A] p-4 rounded-lg">
                         <div className="flex items-center gap-1.5 text-xs font-bold text-[#92400E]">
-                          <Clock className="w-4 h-4" />
+                          <Clock className="w-4 h-4" aria-hidden="true" />
                           <span>Best Time to Open Windows</span>
                         </div>
                         <p className="text-lg font-bold text-[#0F1E36] mt-1">
@@ -929,7 +871,13 @@ export default function AirQualityAssistant() {
                           {completedCount} of {totalActions} Done ({progressPct}%)
                         </span>
                       </div>
-                      <div className="w-full h-2.5 bg-[#E2E8F0] rounded-full overflow-hidden">
+                      <div
+                        className="w-full h-2.5 bg-[#E2E8F0] rounded-full overflow-hidden"
+                        role="progressbar"
+                        aria-valuenow={progressPct}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
                         <div
                           className="h-full bg-[#0284C7] transition-all duration-300"
                           style={{ width: `${progressPct}%` }}
@@ -938,8 +886,7 @@ export default function AirQualityAssistant() {
                     </div>
                   </div>
 
-                  {/* Category Filter Pills */}
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2" role="group" aria-label="Filter action steps">
                     {[
                       { id: 'all', label: `All Steps (${totalActions})` },
                       { id: 'indoor', label: `Indoor Air (${indoorHacks.length})` },
@@ -949,6 +896,7 @@ export default function AirQualityAssistant() {
                       <button
                         key={tab.id}
                         type="button"
+                        aria-pressed={categoryFilter === tab.id}
                         onClick={() => setCategoryFilter(tab.id as typeof categoryFilter)}
                         className={`px-4 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
                           categoryFilter === tab.id
@@ -961,14 +909,13 @@ export default function AirQualityAssistant() {
                     ))}
                   </div>
 
-                  {/* Clean Action Cards */}
                   <div className="space-y-6">
                     {visibleGroups.map((group) => {
                       const Icon = group.icon;
                       return (
                         <div key={group.id} className="space-y-3">
                           <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold ${group.badge}`}>
-                            <Icon className="w-3.5 h-3.5" />
+                            <Icon className="w-3.5 h-3.5" aria-hidden="true" />
                             {group.title}
                           </span>
 
@@ -977,16 +924,18 @@ export default function AirQualityAssistant() {
                               const key = `${group.id}-${idx}`;
                               const done = !!completedTasks[key];
                               return (
-                                <div
+                                <button
                                   key={key}
+                                  type="button"
+                                  aria-pressed={done}
                                   onClick={() => toggleTask(key)}
-                                  className={`p-5 rounded-xl border border-l-4 ${group.border} transition cursor-pointer flex items-start gap-3.5 ${
+                                  className={`p-5 rounded-xl border border-l-4 ${group.border} text-left transition cursor-pointer flex items-start gap-3.5 ${
                                     done
                                       ? 'bg-[#F0F9FF] border-[#7DD3FC]'
                                       : 'bg-[#FDFCFA] border-[#D5D8DF] hover:bg-white'
                                   }`}
                                 >
-                                  <div className="mt-0.5 shrink-0">
+                                  <div className="mt-0.5 shrink-0" aria-hidden="true">
                                     {done ? (
                                       <CheckCircle2 className="w-5 h-5 text-[#0284C7]" />
                                     ) : (
@@ -1009,7 +958,7 @@ export default function AirQualityAssistant() {
                                       Why it helps: {item.impactExplanation}
                                     </p>
                                   </div>
-                                </div>
+                                </button>
                               );
                             })}
                           </div>
@@ -1022,9 +971,8 @@ export default function AirQualityAssistant() {
             </div>
           )}
 
-          {/* TAB 2: INTERACTIVE INDOOR SMOKE SIMULATOR */}
           {workspaceTab === 'simulator' && (
-            <div className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-6 sm:p-8 space-y-6">
+            <div role="tabpanel" className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-6 sm:p-8 space-y-6">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E6E8EE] pb-4">
                 <div>
                   <h3 className="text-xl font-bold text-[#0F1E36]">
@@ -1034,22 +982,23 @@ export default function AirQualityAssistant() {
                     Tap everyday activities below to see how fast indoor smoke builds up and how long it takes to clear.
                   </p>
                 </div>
-                <div className="bg-[#0F1E36] text-[#F7F5F0] px-4 py-2.5 rounded-lg text-right">
+                <div className="bg-[#0F1E36] text-[#F7F5F0] px-4 py-2.5 rounded-lg text-right" aria-live="polite">
                   <span className="text-[11px] text-[#FBBF24] block font-semibold">Room Clears In</span>
-                  <span className="text-xl font-bold">{clearanceMinutes} mins</span>
+                  <span className="text-xl font-bold">{simulation.clearanceMinutes} mins</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-3">
                   <p className="text-sm font-bold text-[#991B1B]">Step 1: Choose what&apos;s happening indoors</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" role="group" aria-label="Indoor smoke triggers">
                     {INDOOR_TRIGGERS.map((t) => {
                       const active = activeTriggers.includes(t.id);
                       return (
                         <button
                           key={t.id}
                           type="button"
+                          aria-pressed={active}
                           onClick={() => toggleTrigger(t.id)}
                           className={`p-3.5 rounded-lg border text-left transition cursor-pointer ${
                             active
@@ -1067,13 +1016,14 @@ export default function AirQualityAssistant() {
 
                 <div className="space-y-3">
                   <p className="text-sm font-bold text-[#075985]">Step 2: Turn on your home protections</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" role="group" aria-label="Indoor air protections">
                     {INDOOR_FIXES.map((f) => {
                       const active = activeFixes.includes(f.id);
                       return (
                         <button
                           key={f.id}
                           type="button"
+                          aria-pressed={active}
                           onClick={() => toggleFix(f.id)}
                           className={`p-3.5 rounded-lg border text-left transition cursor-pointer ${
                             active
@@ -1090,26 +1040,27 @@ export default function AirQualityAssistant() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2" aria-live="polite">
                 <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-4">
                   <span className="text-xs font-bold text-[#991B1B]">Without Protection</span>
-                  <p className="text-2xl font-bold text-[#7F1D1D] mt-1">{rawIndoorPeak} µg/m³</p>
+                  <p className="text-2xl font-bold text-[#7F1D1D] mt-1">{simulation.rawIndoorPeak} µg/m³</p>
                   <p className="text-xs text-[#991B1B] mt-0.5">Trapped smoke inside closed rooms</p>
                 </div>
                 <div className="bg-[#E0F2FE] border border-[#7DD3FC] rounded-lg p-4">
                   <span className="text-xs font-bold text-[#075985]">With Your Selected Controls</span>
                   <p className="text-2xl font-bold text-[#0C4A6E] mt-1">
-                    {mitigatedIndoorPm25} µg/m³ (~{protectedCigs} cigs/day)
+                    {simulation.mitigatedIndoorPm25} µg/m³ (~{simulation.protectedCigarettes} cigs/day)
                   </p>
-                  <p className="text-xs text-[#075985] mt-0.5">Safe to remove masks in ~{clearanceMinutes} minutes</p>
+                  <p className="text-xs text-[#075985] mt-0.5">
+                    Safe to remove masks in ~{simulation.clearanceMinutes} minutes
+                  </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 3: ASK A QUESTION */}
           {workspaceTab === 'ask' && (
-            <div className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-6 sm:p-8 space-y-5">
+            <div role="tabpanel" className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-6 sm:p-8 space-y-5">
               <div>
                 <h3 className="text-xl font-bold text-[#0F1E36]">Ask anything about your home&apos;s air</h3>
                 <p className="text-sm text-[#475569]">
@@ -1131,7 +1082,7 @@ export default function AirQualityAssistant() {
               </div>
 
               {qaHistory.length > 0 && (
-                <div className="space-y-3">
+                <div className="space-y-3" aria-live="polite">
                   {qaHistory.map((item, idx) => (
                     <div key={idx} className="bg-[#F7F5F0] border border-[#D5D8DF] rounded-lg p-4 space-y-1.5">
                       <p className="text-sm font-bold text-[#0284C7]">You: {item.q}</p>
@@ -1146,6 +1097,7 @@ export default function AirQualityAssistant() {
                   type="text"
                   value={question}
                   onChange={(e) => setQuestion(e.target.value)}
+                  aria-label="Ask a question about indoor air quality"
                   placeholder="Type your question (e.g., Which N95 mask fits kids best?)..."
                   className="flex-1 rounded-lg bg-[#F7F5F0] border border-[#CBD0DA] px-4 py-3 text-sm text-[#0F1E36] focus:outline-none focus:ring-2 focus:ring-[#0284C7] focus:bg-white"
                 />
@@ -1154,7 +1106,7 @@ export default function AirQualityAssistant() {
                   disabled={askingFollowUp || !question.trim()}
                   className="inline-flex items-center gap-2 px-6 py-3 rounded-lg bg-[#0F1E36] hover:bg-[#1E3A66] disabled:opacity-45 text-white font-bold text-sm transition cursor-pointer"
                 >
-                  <Send className="w-4 h-4" />
+                  <Send className="w-4 h-4" aria-hidden="true" />
                   {askingFollowUp ? 'Thinking...' : 'Ask'}
                 </button>
               </form>
