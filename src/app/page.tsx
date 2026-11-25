@@ -2,46 +2,31 @@
 
 import { useEffect, useState } from 'react';
 import {
-  Wind,
-  ShieldCheck,
-  Leaf,
-  Home,
   AlertTriangle,
-  Check,
-  MapPin,
-  Users,
   Car,
-  Search,
-  Copy,
+  Download,
+  Flame,
+  Home,
   MessageSquare,
   Send,
-  Clock,
-  TrendingDown,
-  CloudFog,
-  Printer,
-  Sparkles,
-  CheckCircle2,
-  Circle,
-  Flame,
-  Download,
   Share2,
-  Footprints,
-  GraduationCap,
-  DoorOpen,
-  Shirt,
+  ShieldCheck,
+  Sparkles,
+  Users,
+  Wind,
 } from 'lucide-react';
 import { AirQualityPlan, LiveAqiData, UserProfile } from '@/types/air';
 import {
-  INDOOR_FIXES,
-  INDOOR_TRIGGERS,
   calculateCigaretteEquivalent,
   formatWhatsAppBrief,
   getAqiStatusBadge,
   getDailyActivityVerdicts,
   simulateIndoorAir,
 } from '@/lib/airMetrics';
-
-const CITIES = ['Kolkata', 'Delhi', 'Mumbai', 'Bengaluru', 'Patna', 'Lucknow'];
+import { downloadFamilyPoster } from '@/lib/posterGenerator';
+import { TelemetryPanel } from '@/components/TelemetryPanel';
+import { ActionPlanTab } from '@/components/ActionPlanTab';
+import { IndoorSimulatorTab } from '@/components/IndoorSimulatorTab';
 
 const FAMILY_OPTIONS = [
   '2 Adults',
@@ -73,13 +58,6 @@ const SUGGESTED_QUESTIONS = [
   'Which indoor plants actually help in winter smog?',
 ];
 
-const VERDICT_ICONS = {
-  walk: Footprints,
-  commute: GraduationCap,
-  windows: DoorOpen,
-  laundry: Shirt,
-};
-
 export default function AirQualityAssistant() {
   const [cityInput, setCityInput] = useState('Kolkata');
   const [selectedFamily, setSelectedFamily] = useState<string[]>(['2 Adults', 'Elderly Parent']);
@@ -102,9 +80,7 @@ export default function AirQualityAssistant() {
   const [plan, setPlan] = useState<AirQualityPlan | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState<'all' | 'indoor' | 'routines' | 'sustainable'>('all');
   const [completedTasks, setCompletedTasks] = useState<Record<string, boolean>>({});
-  const [copied, setCopied] = useState(false);
   const [waCopied, setWaCopied] = useState(false);
 
   const [question, setQuestion] = useState('');
@@ -115,20 +91,8 @@ export default function AirQualityAssistant() {
     syncCityTelemetry('Kolkata');
   }, []);
 
-  const toggleSelection = (list: string[], setList: (v: string[]) => void, item: string) => {
+  const toggleItem = (list: string[], setList: (v: string[]) => void, item: string) => {
     setList(list.includes(item) ? list.filter((i) => i !== item) : [...list, item]);
-  };
-
-  const toggleTask = (key: string) => {
-    setCompletedTasks((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
-  const toggleTrigger = (id: string) => {
-    setActiveTriggers((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-  };
-
-  const toggleFix = (id: string) => {
-    setActiveFixes((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
   async function syncCityTelemetry(targetCity: string) {
@@ -137,13 +101,7 @@ export default function AirQualityAssistant() {
     setAqiError('');
     try {
       const res = await fetch(`/api/aqi?city=${encodeURIComponent(targetCity.trim())}`);
-      const text = await res.text();
-      let data: LiveAqiData & { error?: string };
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error('Could not read weather sensor response. Please try again.');
-      }
+      const data: LiveAqiData & { error?: string } = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not find that city');
       setLiveAqi(data);
     } catch (err: unknown) {
@@ -162,26 +120,13 @@ export default function AirQualityAssistant() {
     setCompletedTasks({});
     setWorkspaceTab('plan');
 
-    let currentLive = liveAqi;
-    if (!currentLive || !currentLive.resolvedName.toLowerCase().includes(cityInput.trim().toLowerCase())) {
-      try {
-        const res = await fetch(`/api/aqi?city=${encodeURIComponent(cityInput.trim())}`);
-        if (res.ok) {
-          currentLive = await res.json();
-          setLiveAqi(currentLive);
-        }
-      } catch {
-        // Proceed with fallback severity if sensor fetch fails
-      }
-    }
-
     const profilePayload: UserProfile = {
       city: cityInput.trim(),
-      aqiLevel: currentLive?.category ?? 'Very Poor / Severe (AQI 201–300)',
-      householdMembers: selectedFamily.length > 0 ? selectedFamily.join(', ') : '2 adults',
+      aqiLevel: liveAqi?.category ?? 'Very Poor / Severe (AQI 201–300)',
+      householdMembers: selectedFamily.join(', ') || '2 adults',
       homeFeatures: [selectedHome.join(', '), extraNotes.trim()].filter(Boolean).join(' — ') || 'Standard flat',
-      commuteMode: selectedTravel.length > 0 ? selectedTravel.join(', ') : 'Public transit',
-      liveMetrics: currentLive,
+      commuteMode: selectedTravel.join(', ') || 'Public transit',
+      liveMetrics: liveAqi,
     };
 
     try {
@@ -237,8 +182,10 @@ export default function AirQualityAssistant() {
       if (!res.ok) throw new Error(data.error || 'Failed to answer');
       setQaHistory((prev) => [...prev, { q: currentQ, a: data.answer }]);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unable to answer right now.';
-      setQaHistory((prev) => [...prev, { q: currentQ, a: msg }]);
+      setQaHistory((prev) => [
+        ...prev,
+        { q: currentQ, a: err instanceof Error ? err.message : 'Unable to answer right now.' },
+      ]);
     } finally {
       setAskingFollowUp(false);
     }
@@ -252,161 +199,18 @@ export default function AirQualityAssistant() {
   const activityVerdicts = getDailyActivityVerdicts(usAqi, liveAqi?.safestWindowLabel);
 
   function handleCopyWhatsApp() {
-    const msg = formatWhatsAppBrief({
-      city: liveAqi?.resolvedName ?? cityInput,
-      usAqi,
-      outdoorPm25,
-      safestWindowLabel: liveAqi?.safestWindowLabel,
-      plan,
-    });
-    navigator.clipboard.writeText(msg);
+    navigator.clipboard.writeText(
+      formatWhatsAppBrief({
+        city: liveAqi?.resolvedName ?? cityInput,
+        usAqi,
+        outdoorPm25,
+        safestWindowLabel: liveAqi?.safestWindowLabel,
+        plan,
+      })
+    );
     setWaCopied(true);
     setTimeout(() => setWaCopied(false), 2500);
   }
-
-  function handleDownloadFamilyCard() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1080;
-    canvas.height = 1080;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const activeCity = (cityInput.trim() || 'KOLKATA').toUpperCase();
-    const safeWindow =
-      plan?.quantifiedImpact?.safeVentilationWindow ??
-      liveAqi?.safestWindowLabel ??
-      '1:00 PM – 3:30 PM';
-
-    ctx.fillStyle = '#0F1E36';
-    ctx.fillRect(0, 0, 1080, 390);
-    ctx.fillStyle = '#F7F5F0';
-    ctx.fillRect(0, 390, 1080, 690);
-
-    ctx.fillStyle = '#F59E0B';
-    ctx.fillRect(72, 64, 18, 56);
-
-    ctx.fillStyle = '#F7F5F0';
-    ctx.font = 'bold 40px sans-serif';
-    ctx.fillText('VAYUGUARD // FAMILY AIR GUIDE', 110, 106);
-
-    ctx.fillStyle = '#7DD3FC';
-    ctx.font = 'bold 28px sans-serif';
-    ctx.fillText(`CITY: ${activeCity}  •  US AQI ${usAqi}`, 72, 185);
-
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 58px sans-serif';
-    ctx.fillText(`Equals ~${unprotectedCigs} cigarettes/day`, 72, 265);
-
-    ctx.fillStyle = '#FBBF24';
-    ctx.font = 'bold 28px sans-serif';
-    ctx.fillText(`With Home Protection: drops to ~${simulation.protectedCigarettes} cigarettes/day`, 72, 330);
-
-    ctx.fillStyle = '#0F1E36';
-    ctx.fillRect(72, 440, 936, 130);
-    ctx.fillStyle = '#FBBF24';
-    ctx.font = 'bold 22px sans-serif';
-    ctx.fillText('BEST TIME TO OPEN WINDOWS TODAY', 104, 490);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 38px sans-serif';
-    ctx.fillText(safeWindow, 104, 542);
-
-    ctx.fillStyle = '#0F1E36';
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText('4 SIMPLE RULES FOR OUR HOME:', 72, 645);
-
-    const rules = plan
-      ? [
-          ...(plan.indoorAirHacks || []).slice(0, 2).map((h, i) => `${i + 1}. ${h.title}`),
-          ...(plan.lowEmissionRoutines || []).slice(0, 2).map((r, i) => `${i + 3}. ${r.title}`),
-        ]
-      : [
-          '1. Keep balcony doors & windows closed during 6–9 AM peak',
-          '2. Always switch on kitchen exhaust during tadka or frying',
-          '3. Wet-mop floors instead of dry broom sweeping',
-          '4. Wear a snug N95 mask on two-wheeler or auto rides',
-        ];
-
-    ctx.font = '27px sans-serif';
-    ctx.fillStyle = '#1E293B';
-    rules.forEach((rule, i) => {
-      ctx.fillText(rule.slice(0, 56), 72, 710 + i * 64);
-    });
-
-    const link = document.createElement('a');
-    link.download = `VayuGuard-${activeCity}-Guide.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-  }
-
-  function handleCopyPlan() {
-    if (!plan) return;
-    const lines = [
-      `VAYUGUARD // HOUSEHOLD AIR PLAN (${cityInput.toUpperCase()})`,
-      plan.riskSummary,
-      '',
-      'INDOOR AIR FIXES:',
-      ...(plan.indoorAirHacks || []).map((i) => `- ${i.title}: ${i.description}`),
-      '',
-      'DAILY ROUTINES:',
-      ...(plan.lowEmissionRoutines || []).map((i) => `- ${i.title}: ${i.description}`),
-      '',
-      'ECO-FRIENDLY HABITS:',
-      ...(plan.sustainableAlternatives || []).map((i) => `- ${i.title}: ${i.description}`),
-    ];
-    navigator.clipboard.writeText(lines.join('\n'));
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
-  }
-
-  const indoorHacks = plan?.indoorAirHacks ?? [];
-  const routines = plan?.lowEmissionRoutines ?? [];
-  const alternatives = plan?.sustainableAlternatives ?? [];
-
-  const totalActions = indoorHacks.length + routines.length + alternatives.length;
-  const completedCount = Object.values(completedTasks).filter(Boolean).length;
-  const progressPct = totalActions > 0 ? Math.round((completedCount / totalActions) * 100) : 0;
-
-  const visibleGroups = [
-    ...(categoryFilter === 'all' || categoryFilter === 'indoor'
-      ? [
-          {
-            id: 'indoor',
-            title: 'Keep Indoor Air Clean',
-            badge: 'bg-[#E0F2FE] text-[#075985]',
-            border: 'border-l-[#0284C7]',
-            icon: Home,
-            items: indoorHacks,
-          },
-        ]
-      : []),
-    ...(categoryFilter === 'all' || categoryFilter === 'routines'
-      ? [
-          {
-            id: 'routine',
-            title: 'Safer Daily Habits',
-            badge: 'bg-[#FEF3C7] text-[#92400E]',
-            border: 'border-l-[#D97706]',
-            icon: ShieldCheck,
-            items: routines,
-          },
-        ]
-      : []),
-    ...(categoryFilter === 'all' || categoryFilter === 'sustainable'
-      ? [
-          {
-            id: 'sustainable',
-            title: 'Eco-Friendly Swaps',
-            badge: 'bg-[#CCFBF1] text-[#115E59]',
-            border: 'border-l-[#0D9488]',
-            icon: Leaf,
-            items: alternatives,
-          },
-        ]
-      : []),
-  ];
-
-  const hourlyData = liveAqi?.hourlyForecast ?? [];
-  const maxHourlyPm25 = Math.max(...hourlyData.map((d) => d.pm25), 100);
 
   return (
     <div className="min-h-screen bg-[#F7F5F0] text-[#0F1E36] selection:bg-[#F59E0B] selection:text-[#0F1E36]">
@@ -442,7 +246,16 @@ export default function AirQualityAssistant() {
             </button>
             <button
               type="button"
-              onClick={handleDownloadFamilyCard}
+              onClick={() =>
+                downloadFamilyPoster({
+                  city: cityInput,
+                  usAqi,
+                  unprotectedCigs,
+                  protectedCigs: simulation.protectedCigarettes,
+                  safestWindowLabel: liveAqi?.safestWindowLabel,
+                  plan,
+                })
+              }
               aria-label="Download family air quality guide image"
               className="inline-flex items-center gap-1.5 text-xs font-bold px-3.5 py-2 rounded-lg bg-[#F59E0B] hover:bg-[#D97706] text-[#0F1E36] transition cursor-pointer"
             >
@@ -454,153 +267,20 @@ export default function AirQualityAssistant() {
       </header>
 
       <main id="main-content" className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-8">
-        {/* STEP 1: INSTANT LIVE AIR CHECKER & DAILY VERDICTS */}
-        <section aria-labelledby="telemetry-heading" className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-5 sm:p-7 space-y-6">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-[#E6E8EE] pb-5">
-            <div aria-live="polite">
-              <div className="flex items-center gap-2.5 flex-wrap">
-                <h1 id="telemetry-heading" className="text-2xl sm:text-3xl font-bold tracking-tight text-[#0F1E36]">
-                  {liveAqi?.resolvedName ?? cityInput}
-                </h1>
-                <span className={`text-xs font-bold px-3 py-1 rounded-full ${statusBadge.bg}`}>
-                  US AQI {usAqi} • {statusBadge.label}
-                </span>
-              </div>
-              <p className="text-sm text-[#475569] mt-1">
-                Live outdoor PM2.5 is <strong className="text-[#0F1E36]">{outdoorPm25} µg/m³</strong> — breathing this unprotected all day equals{' '}
-                <strong className="text-[#DC2626]">~{unprotectedCigs} cigarettes</strong>.
-              </p>
-            </div>
+        <TelemetryPanel
+          cityInput={cityInput}
+          onCityInputChange={setCityInput}
+          onSyncCity={syncCityTelemetry}
+          liveAqi={liveAqi}
+          fetchingAqi={fetchingAqi}
+          aqiError={aqiError}
+          usAqi={usAqi}
+          outdoorPm25={outdoorPm25}
+          statusBadge={statusBadge}
+          unprotectedCigs={unprotectedCigs}
+          activityVerdicts={activityVerdicts}
+        />
 
-            <div className="flex flex-col sm:items-end gap-2">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  syncCityTelemetry(cityInput);
-                }}
-                className="flex gap-2 w-full sm:w-auto"
-              >
-                <div className="relative flex-1 sm:w-56">
-                  <MapPin className="w-4 h-4 text-[#0284C7] absolute left-3 top-3" aria-hidden="true" />
-                  <input
-                    type="text"
-                    value={cityInput}
-                    onChange={(e) => setCityInput(e.target.value)}
-                    placeholder="Search any city..."
-                    aria-label="Search city"
-                    className="w-full rounded-lg bg-[#F7F5F0] border border-[#CBD0DA] pl-9 pr-3 py-2 text-sm font-medium text-[#0F1E36] focus:outline-none focus:ring-2 focus:ring-[#0284C7]"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={fetchingAqi || !cityInput.trim()}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#0F1E36] hover:bg-[#1E3A66] text-white text-sm font-semibold transition cursor-pointer"
-                >
-                  <Search className="w-4 h-4" aria-hidden="true" />
-                  {fetchingAqi ? 'Checking...' : 'Check'}
-                </button>
-              </form>
-
-              <div className="flex flex-wrap gap-1.5" role="group" aria-label="Quick city presets">
-                {CITIES.map((c) => {
-                  const selected = cityInput.toLowerCase() === c.toLowerCase();
-                  return (
-                    <button
-                      key={c}
-                      type="button"
-                      aria-pressed={selected}
-                      onClick={() => {
-                        setCityInput(c);
-                        syncCityTelemetry(c);
-                      }}
-                      className={`text-xs px-2.5 py-1 rounded-md border transition cursor-pointer ${
-                        selected
-                          ? 'bg-[#0F1E36] text-white border-[#0F1E36] font-semibold'
-                          : 'bg-[#F7F5F0] text-[#334155] border-[#D5D8DF] hover:border-[#0F1E36]'
-                      }`}
-                    >
-                      {c}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          {aqiError && (
-            <p role="alert" className="text-xs text-[#DC2626] font-medium bg-[#FEE2E2] px-3 py-2 rounded-lg">
-              {aqiError}
-            </p>
-          )}
-
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {activityVerdicts.map((item) => {
-              const Icon = VERDICT_ICONS[item.id];
-              return (
-                <div key={item.id} className="bg-[#F7F5F0] border border-[#DCE0E8] rounded-lg p-3.5 space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-[#475569]">
-                    <Icon className="w-4 h-4 text-[#0F1E36]" aria-hidden="true" />
-                    <span>{item.label}</span>
-                  </div>
-                  <span className={`inline-block text-xs font-bold px-2.5 py-1 rounded-md border ${item.tone}`}>
-                    {item.verdict}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {hourlyData.length > 0 && (
-            <div className="bg-[#F7F5F0] border border-[#DCE0E8] rounded-lg p-4 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-xs font-bold text-[#0F1E36]">
-                  Next 24 Hours Air Quality (Hover any bar to see exact hour)
-                </span>
-                <div className="flex items-center gap-3 text-[11px] font-medium">
-                  <span className="inline-flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-[#0284C7]" /> Best to open windows
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-[#F59E0B]" /> Moderate
-                  </span>
-                  <span className="inline-flex items-center gap-1">
-                    <span className="w-2.5 h-2.5 rounded-sm bg-[#DC2626]" /> Heavy smog
-                  </span>
-                </div>
-              </div>
-
-              <div className="h-24 flex items-end gap-1.5 pt-2" role="img" aria-label="24-hour PM2.5 air quality forecast bar chart">
-                {hourlyData.map((pt, idx) => {
-                  const heightPct = Math.max(15, Math.min(100, Math.round((pt.pm25 / maxHourlyPm25) * 100)));
-                  const barColor =
-                    pt.pm25 >= 150 ? 'bg-[#DC2626]' : pt.pm25 >= 90 ? 'bg-[#F59E0B]' : 'bg-[#0284C7]';
-                  return (
-                    <div
-                      key={`${pt.time}-${idx}`}
-                      title={`${pt.time} — PM2.5: ${pt.pm25} µg/m³ (AQI ${pt.usAqi})`}
-                      className="flex-1 flex flex-col items-center justify-end h-full group cursor-pointer"
-                    >
-                      <div
-                        style={{ height: `${heightPct}%` }}
-                        className={`w-full rounded-t ${barColor} opacity-85 group-hover:opacity-100 transition-all`}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="flex justify-between text-[11px] font-medium text-[#64748B]">
-                <span>{hourlyData[0]?.hourLabel}</span>
-                <span>{hourlyData[6]?.hourLabel}</span>
-                <span>{hourlyData[12]?.hourLabel}</span>
-                <span>{hourlyData[18]?.hourLabel}</span>
-                <span>{hourlyData[23]?.hourLabel}</span>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* STEP 2: 3-CLICK HOUSEHOLD CUSTOMIZER */}
         <section aria-labelledby="customizer-heading" className="bg-[#0F1E36] text-[#F7F5F0] rounded-xl p-6 sm:p-8 space-y-6">
           <div className="space-y-1">
             <span className="text-xs font-bold uppercase tracking-wider text-[#FBBF24]">
@@ -613,89 +293,42 @@ export default function AirQualityAssistant() {
 
           <form onSubmit={handleGeneratePlan} className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="space-y-2.5">
-                <span className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
-                  <Users className="w-4 h-4 text-[#FBBF24]" aria-hidden="true" />
-                  1. Who lives with you?
-                </span>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Household members">
-                  {FAMILY_OPTIONS.map((opt) => {
-                    const active = selectedFamily.includes(opt);
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => toggleSelection(selectedFamily, setSelectedFamily, opt)}
-                        className={`text-xs px-3 py-2 rounded-lg font-medium border transition cursor-pointer ${
-                          active
-                            ? 'bg-[#0284C7] text-white border-[#38BDF8] font-bold'
-                            : 'bg-[#192D4E] text-[#E2E8F0] border-[#2C4B7E] hover:border-[#7DD3FC]'
-                        }`}
-                      >
-                        {active ? '✓ ' : '+ '}
-                        {opt}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="space-y-2.5">
-                <span className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
-                  <Home className="w-4 h-4 text-[#FBBF24]" aria-hidden="true" />
-                  2. Your home setup
-                </span>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Home setup">
-                  {HOME_OPTIONS.map((opt) => {
-                    const active = selectedHome.includes(opt);
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => toggleSelection(selectedHome, setSelectedHome, opt)}
-                        className={`text-xs px-3 py-2 rounded-lg font-medium border transition cursor-pointer ${
-                          active
-                            ? 'bg-[#0284C7] text-white border-[#38BDF8] font-bold'
-                            : 'bg-[#192D4E] text-[#E2E8F0] border-[#2C4B7E] hover:border-[#7DD3FC]'
-                        }`}
-                      >
-                        {active ? '✓ ' : '+ '}
-                        {opt}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="space-y-2.5">
-                <span className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
-                  <Car className="w-4 h-4 text-[#FBBF24]" aria-hidden="true" />
-                  3. Daily travel mode
-                </span>
-                <div className="flex flex-wrap gap-2" role="group" aria-label="Daily travel mode">
-                  {TRAVEL_OPTIONS.map((opt) => {
-                    const active = selectedTravel.includes(opt);
-                    return (
-                      <button
-                        key={opt}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => toggleSelection(selectedTravel, setSelectedTravel, opt)}
-                        className={`text-xs px-3 py-2 rounded-lg font-medium border transition cursor-pointer ${
-                          active
-                            ? 'bg-[#0284C7] text-white border-[#38BDF8] font-bold'
-                            : 'bg-[#192D4E] text-[#E2E8F0] border-[#2C4B7E] hover:border-[#7DD3FC]'
-                        }`}
-                      >
-                        {active ? '✓ ' : '+ '}
-                        {opt}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              {[
+                { label: '1. Who lives with you?', aria: 'Household members', icon: Users, options: FAMILY_OPTIONS, selected: selectedFamily, setter: setSelectedFamily },
+                { label: '2. Your home setup', aria: 'Home setup', icon: Home, options: HOME_OPTIONS, selected: selectedHome, setter: setSelectedHome },
+                { label: '3. Daily travel mode', aria: 'Daily travel mode', icon: Car, options: TRAVEL_OPTIONS, selected: selectedTravel, setter: setSelectedTravel },
+              ].map((group) => {
+                const Icon = group.icon;
+                return (
+                  <div key={group.label} className="space-y-2.5">
+                    <span className="flex items-center gap-2 text-sm font-semibold text-[#F7F5F0]">
+                      <Icon className="w-4 h-4 text-[#FBBF24]" aria-hidden="true" />
+                      {group.label}
+                    </span>
+                    <div className="flex flex-wrap gap-2" role="group" aria-label={group.aria}>
+                      {group.options.map((opt) => {
+                        const active = group.selected.includes(opt);
+                        return (
+                          <button
+                            key={opt}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => toggleItem(group.selected, group.setter, opt)}
+                            className={`text-xs px-3 py-2 rounded-lg font-medium border transition cursor-pointer ${
+                              active
+                                ? 'bg-[#0284C7] text-white border-[#38BDF8] font-bold'
+                                : 'bg-[#192D4E] text-[#E2E8F0] border-[#2C4B7E] hover:border-[#7DD3FC]'
+                            }`}
+                          >
+                            {active ? '✓ ' : '+ '}
+                            {opt}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-2 border-t border-[#1E3354]">
@@ -720,343 +353,57 @@ export default function AirQualityAssistant() {
         </section>
 
         {error && (
-          <div
-            role="alert"
-            className="bg-[#FEE2E2] border border-[#FCA5A5] text-[#991B1B] p-4 rounded-xl flex items-center gap-3 text-sm font-medium"
-          >
+          <div role="alert" className="bg-[#FEE2E2] border border-[#FCA5A5] text-[#991B1B] p-4 rounded-xl flex items-center gap-3 text-sm font-medium">
             <AlertTriangle className="w-5 h-5 shrink-0" aria-hidden="true" />
             <span>{error}</span>
           </div>
         )}
 
-        {/* STEP 3: CLEAN TABBED WORKSPACE */}
         <section className="space-y-5">
           <div role="tablist" aria-label="Workspace tools" className="flex flex-wrap gap-2 border-b border-[#D5D8DF] pb-3">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={workspaceTab === 'plan'}
-              onClick={() => setWorkspaceTab('plan')}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition cursor-pointer ${
-                workspaceTab === 'plan'
-                  ? 'bg-[#0F1E36] text-white'
-                  : 'bg-[#FDFCFA] text-[#334155] border border-[#D5D8DF] hover:border-[#0F1E36]'
-              }`}
-            >
-              <ShieldCheck className="w-4 h-4 text-[#F59E0B]" aria-hidden="true" />
-              <span>My Family&apos;s Action Plan</span>
-            </button>
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={workspaceTab === 'simulator'}
-              onClick={() => setWorkspaceTab('simulator')}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition cursor-pointer ${
-                workspaceTab === 'simulator'
-                  ? 'bg-[#0F1E36] text-white'
-                  : 'bg-[#FDFCFA] text-[#334155] border border-[#D5D8DF] hover:border-[#0F1E36]'
-              }`}
-            >
-              <Flame className="w-4 h-4 text-[#F59E0B]" aria-hidden="true" />
-              <span>Indoor Smoke Simulator (Tadka / Dhoop)</span>
-            </button>
-
-            <button
-              type="button"
-              role="tab"
-              aria-selected={workspaceTab === 'ask'}
-              onClick={() => setWorkspaceTab('ask')}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition cursor-pointer ${
-                workspaceTab === 'ask'
-                  ? 'bg-[#0F1E36] text-white'
-                  : 'bg-[#FDFCFA] text-[#334155] border border-[#D5D8DF] hover:border-[#0F1E36]'
-              }`}
-            >
-              <MessageSquare className="w-4 h-4 text-[#38BDF8]" aria-hidden="true" />
-              <span>Ask a Question</span>
-            </button>
+            {[
+              { id: 'plan', label: "My Family's Action Plan", icon: ShieldCheck, color: 'text-[#F59E0B]' },
+              { id: 'simulator', label: 'Indoor Smoke Simulator (Tadka / Dhoop)', icon: Flame, color: 'text-[#F59E0B]' },
+              { id: 'ask', label: 'Ask a Question', icon: MessageSquare, color: 'text-[#38BDF8]' },
+            ].map((tab) => {
+              const Icon = tab.icon;
+              const active = workspaceTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setWorkspaceTab(tab.id as typeof workspaceTab)}
+                  className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold transition cursor-pointer ${
+                    active ? 'bg-[#0F1E36] text-white' : 'bg-[#FDFCFA] text-[#334155] border border-[#D5D8DF] hover:border-[#0F1E36]'
+                  }`}
+                >
+                  <Icon className={`w-4 h-4 ${tab.color}`} aria-hidden="true" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
           </div>
 
           {workspaceTab === 'plan' && (
-            <div role="tabpanel" className="space-y-6">
-              {loading && (
-                <div className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-8 space-y-4 animate-pulse" aria-busy="true">
-                  <div className="h-5 w-56 bg-[#E2E8F0] rounded" />
-                  <div className="h-16 w-full bg-[#F1F5F9] rounded" />
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="h-24 bg-[#F1F5F9] rounded" />
-                    <div className="h-24 bg-[#F1F5F9] rounded" />
-                    <div className="h-24 bg-[#F1F5F9] rounded" />
-                  </div>
-                </div>
-              )}
-
-              {!plan && !loading && (
-                <div className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-8 text-center space-y-3">
-                  <p className="text-lg font-bold text-[#0F1E36]">
-                    Ready to create your personalized plan for {cityInput}
-                  </p>
-                  <p className="text-sm text-[#475569] max-w-lg mx-auto">
-                    Select who lives in your home above and click <strong>Build My Family&apos;s Air Plan</strong>—or switch tabs to test how cooking and incense affect your room air.
-                  </p>
-                </div>
-              )}
-
-              {plan && !loading && (
-                <>
-                  <div className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-6 space-y-5">
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#E6E8EE] pb-3">
-                      <span className="text-xs font-bold uppercase tracking-wider text-[#0284C7]">
-                        Your Custom Plan • {cityInput}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={handleCopyPlan}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#F7F5F0] hover:bg-[#0F1E36] text-[#0F1E36] hover:text-white border border-[#CBD0DA] transition cursor-pointer"
-                        >
-                          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                          {copied ? 'Copied' : 'Copy Plan'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => window.print()}
-                          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#F7F5F0] hover:bg-[#0F1E36] text-[#0F1E36] hover:text-white border border-[#CBD0DA] transition cursor-pointer"
-                        >
-                          <Printer className="w-3.5 h-3.5" />
-                          Print
-                        </button>
-                      </div>
-                    </div>
-
-                    <p className="text-base text-[#0F1E36] leading-relaxed">{plan.riskSummary}</p>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <div className="bg-[#F0F9FF] border border-[#BAE6FD] p-4 rounded-lg">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-[#075985]">
-                          <CloudFog className="w-4 h-4" aria-hidden="true" />
-                          <span>Cleaner Indoor Air</span>
-                        </div>
-                        <p className="text-lg font-bold text-[#0F1E36] mt-1">
-                          {plan.quantifiedImpact?.estimatedIndoorPm25Reduction ?? '40%–60% less PM2.5'}
-                        </p>
-                      </div>
-
-                      <div className="bg-[#F0FDFA] border border-[#99F6E4] p-4 rounded-lg">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-[#115E59]">
-                          <TrendingDown className="w-4 h-4" aria-hidden="true" />
-                          <span>Carbon Saved</span>
-                        </div>
-                        <p className="text-lg font-bold text-[#0F1E36] mt-1">
-                          {plan.quantifiedImpact?.weeklyCo2SavedKg ?? '8–12 kg CO₂/week'}
-                        </p>
-                      </div>
-
-                      <div className="bg-[#FFFBEB] border border-[#FDE68A] p-4 rounded-lg">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-[#92400E]">
-                          <Clock className="w-4 h-4" aria-hidden="true" />
-                          <span>Best Time to Open Windows</span>
-                        </div>
-                        <p className="text-lg font-bold text-[#0F1E36] mt-1">
-                          {plan.quantifiedImpact?.safeVentilationWindow ?? '1:00 PM – 3:30 PM'}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5 pt-1">
-                      <div className="flex justify-between text-xs font-semibold">
-                        <span className="text-[#475569]">Checklist Progress (Tap items below as you complete them)</span>
-                        <span className="text-[#0284C7]">
-                          {completedCount} of {totalActions} Done ({progressPct}%)
-                        </span>
-                      </div>
-                      <div
-                        className="w-full h-2.5 bg-[#E2E8F0] rounded-full overflow-hidden"
-                        role="progressbar"
-                        aria-valuenow={progressPct}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                      >
-                        <div
-                          className="h-full bg-[#0284C7] transition-all duration-300"
-                          style={{ width: `${progressPct}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2" role="group" aria-label="Filter action steps">
-                    {[
-                      { id: 'all', label: `All Steps (${totalActions})` },
-                      { id: 'indoor', label: `Indoor Air (${indoorHacks.length})` },
-                      { id: 'routines', label: `Daily Habits (${routines.length})` },
-                      { id: 'sustainable', label: `Eco Swaps (${alternatives.length})` },
-                    ].map((tab) => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        aria-pressed={categoryFilter === tab.id}
-                        onClick={() => setCategoryFilter(tab.id as typeof categoryFilter)}
-                        className={`px-4 py-1.5 rounded-full text-xs font-bold transition cursor-pointer ${
-                          categoryFilter === tab.id
-                            ? 'bg-[#0F1E36] text-white'
-                            : 'bg-[#FDFCFA] text-[#334155] border border-[#D5D8DF] hover:border-[#0F1E36]'
-                        }`}
-                      >
-                        {tab.label}
-                      </button>
-                    ))}
-                  </div>
-
-                  <div className="space-y-6">
-                    {visibleGroups.map((group) => {
-                      const Icon = group.icon;
-                      return (
-                        <div key={group.id} className="space-y-3">
-                          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold ${group.badge}`}>
-                            <Icon className="w-3.5 h-3.5" aria-hidden="true" />
-                            {group.title}
-                          </span>
-
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                            {group.items.map((item, idx) => {
-                              const key = `${group.id}-${idx}`;
-                              const done = !!completedTasks[key];
-                              return (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  aria-pressed={done}
-                                  onClick={() => toggleTask(key)}
-                                  className={`p-5 rounded-xl border border-l-4 ${group.border} text-left transition cursor-pointer flex items-start gap-3.5 ${
-                                    done
-                                      ? 'bg-[#F0F9FF] border-[#7DD3FC]'
-                                      : 'bg-[#FDFCFA] border-[#D5D8DF] hover:bg-white'
-                                  }`}
-                                >
-                                  <div className="mt-0.5 shrink-0" aria-hidden="true">
-                                    {done ? (
-                                      <CheckCircle2 className="w-5 h-5 text-[#0284C7]" />
-                                    ) : (
-                                      <Circle className="w-5 h-5 text-[#94A3B8]" />
-                                    )}
-                                  </div>
-
-                                  <div className="space-y-2">
-                                    <h3
-                                      className={`font-bold text-base ${
-                                        done ? 'line-through text-[#64748B]' : 'text-[#0F1E36]'
-                                      }`}
-                                    >
-                                      {item.title}
-                                    </h3>
-                                    <p className="text-sm text-[#334155] leading-relaxed">
-                                      {item.description}
-                                    </p>
-                                    <p className="text-xs font-medium text-[#075985] bg-[#F1F5F9] px-3 py-1.5 rounded-md">
-                                      Why it helps: {item.impactExplanation}
-                                    </p>
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
-            </div>
+            <ActionPlanTab
+              cityInput={cityInput}
+              plan={plan}
+              loading={loading}
+              completedTasks={completedTasks}
+              onToggleTask={(key) => setCompletedTasks((prev) => ({ ...prev, [key]: !prev[key] }))}
+            />
           )}
 
           {workspaceTab === 'simulator' && (
-            <div role="tabpanel" className="bg-[#FDFCFA] border border-[#D5D8DF] rounded-xl p-6 sm:p-8 space-y-6">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E6E8EE] pb-4">
-                <div>
-                  <h3 className="text-xl font-bold text-[#0F1E36]">
-                    What happens inside your room during cooking or incense?
-                  </h3>
-                  <p className="text-sm text-[#475569]">
-                    Tap everyday activities below to see how fast indoor smoke builds up and how long it takes to clear.
-                  </p>
-                </div>
-                <div className="bg-[#0F1E36] text-[#F7F5F0] px-4 py-2.5 rounded-lg text-right" aria-live="polite">
-                  <span className="text-[11px] text-[#FBBF24] block font-semibold">Room Clears In</span>
-                  <span className="text-xl font-bold">{simulation.clearanceMinutes} mins</span>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-3">
-                  <p className="text-sm font-bold text-[#991B1B]">Step 1: Choose what&apos;s happening indoors</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" role="group" aria-label="Indoor smoke triggers">
-                    {INDOOR_TRIGGERS.map((t) => {
-                      const active = activeTriggers.includes(t.id);
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          aria-pressed={active}
-                          onClick={() => toggleTrigger(t.id)}
-                          className={`p-3.5 rounded-lg border text-left transition cursor-pointer ${
-                            active
-                              ? 'bg-[#FEE2E2] border-[#DC2626] text-[#7F1D1D]'
-                              : 'bg-[#F7F5F0] border-[#D5D8DF] text-[#0F1E36] hover:border-[#0F1E36]'
-                          }`}
-                        >
-                          <div className="font-bold text-sm">{t.label}</div>
-                          <div className="text-xs opacity-80 mt-0.5">{t.desc}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <p className="text-sm font-bold text-[#075985]">Step 2: Turn on your home protections</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" role="group" aria-label="Indoor air protections">
-                    {INDOOR_FIXES.map((f) => {
-                      const active = activeFixes.includes(f.id);
-                      return (
-                        <button
-                          key={f.id}
-                          type="button"
-                          aria-pressed={active}
-                          onClick={() => toggleFix(f.id)}
-                          className={`p-3.5 rounded-lg border text-left transition cursor-pointer ${
-                            active
-                              ? 'bg-[#E0F2FE] border-[#0284C7] text-[#0C4A6E]'
-                              : 'bg-[#F7F5F0] border-[#D5D8DF] text-[#0F1E36] hover:border-[#0F1E36]'
-                          }`}
-                        >
-                          <div className="font-bold text-sm">{f.label}</div>
-                          <div className="text-xs opacity-80 mt-0.5">{f.desc}</div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2" aria-live="polite">
-                <div className="bg-[#FEE2E2] border border-[#FCA5A5] rounded-lg p-4">
-                  <span className="text-xs font-bold text-[#991B1B]">Without Protection</span>
-                  <p className="text-2xl font-bold text-[#7F1D1D] mt-1">{simulation.rawIndoorPeak} µg/m³</p>
-                  <p className="text-xs text-[#991B1B] mt-0.5">Trapped smoke inside closed rooms</p>
-                </div>
-                <div className="bg-[#E0F2FE] border border-[#7DD3FC] rounded-lg p-4">
-                  <span className="text-xs font-bold text-[#075985]">With Your Selected Controls</span>
-                  <p className="text-2xl font-bold text-[#0C4A6E] mt-1">
-                    {simulation.mitigatedIndoorPm25} µg/m³ (~{simulation.protectedCigarettes} cigs/day)
-                  </p>
-                  <p className="text-xs text-[#075985] mt-0.5">
-                    Safe to remove masks in ~{simulation.clearanceMinutes} minutes
-                  </p>
-                </div>
-              </div>
-            </div>
+            <IndoorSimulatorTab
+              activeTriggers={activeTriggers}
+              activeFixes={activeFixes}
+              onToggleTrigger={(id) => toggleItem(activeTriggers, setActiveTriggers, id)}
+              onToggleFix={(id) => toggleItem(activeFixes, setActiveFixes, id)}
+              simulation={simulation}
+            />
           )}
 
           {workspaceTab === 'ask' && (
